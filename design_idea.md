@@ -1,112 +1,98 @@
 # Code Crawler (Semantic Code Indexer) - Technical Design Specification
 
-**Version**: 2.0  
+**Version**: 2.1  
 **Status**: Pre-Phase 0 (Design & Architecture)  
-**Target Domain**: Massive embedded C/C++ codebases (Yocto, Buildroot, Linux kernel, RDK-B, Android AOSP).
+**Target Domain**: Massive embedded C/C++ codebases (Yocto, Buildroot, Linux kernel, RDK-B) and future languages via strict API plugins.
 
 ---
 
 ## 1. Executive Summary
-**Code Crawler** is an intelligent, build-system-aware code indexer and Model Context Protocol (MCP) server. It bridges the gap between massive embedded C/C++ codebases and Large Language Models (LLMs). By extracting Abstract Syntax Trees (ASTs), understanding complex build configurations (like Yocto/BitBake), and generating semantic summaries via cost-effective local AI, it creates a highly optimized hybrid Graph+Vector database. High-tier LLMs can then query this database via MCP, bypassing context window limits and reducing "hallucinations."
+**Code Crawler** is an intelligent, build-system-aware code indexer and Model Context Protocol (MCP) server. It bridges the gap between massive codebases and Large Language Models (LLMs). By extracting Abstract Syntax Trees (ASTs), understanding complex builds, generating semantic summaries, and mapping the entire directory/file structure, it creates a highly optimized hybrid Graph+Vector database. High-tier LLMs can read from or **write directly to** this database, creating a living knowledge web.
 
 ## 2. Problem Statement
-Modern LLMs struggle with large-scale embedded engineering:
-1. **Context Limits**: A typical Yocto/Bitbake image contains >5M Lines of Code (LOC). LLMs max out around 128k-200k tokens.
-2. **The `#ifdef` Hell**: Full-text search and naive RAG (Retrieval-Augmented Generation) index *everything*. In the Linux kernel or RDK-B, 50% of the code might be `#ifdef`'d out for a specific hardware target. If the AI doesn't know the build config, it gives wrong answers.
-3. **Complex Call Graphs**: Embedded issues often span hardware abstraction layers (HALs) and kernel spaces. Simple grep cannot follow indirect function calls or macro expansions.
-
-## 3. Core Differentiators
-Existing tools (like standard RAG, Sourcegraph, or Bloop) are language-agnostic but lack build-system awareness. Code Crawler wins by offering:
-- **Build-Context-Aware Indexing**: Only parses files compiled in the *active* Yocto/Buildroot layer or kernel `.config`.
-- **Hybrid Storage (KuzuDB)**: A single embedded database containing both Property Graph (relational mapping) and Vector Embeddings (semantic search).
-- **Official MCP Support**: Instantly plugs into IDEs like Cursor, Claude Desktop, and VS Code.
-- **Selective Background Summarization**: Uses cheap, local models (like `llama-3` via Ollama) to summarize function intents *before* you need them.
+Modern LLMs struggle with large-scale software engineering:
+1. **Context Limits**: A typical Yocto/Bitbake image contains >5M Lines of Code (LOC).
+2. **The `#ifdef` Hell**: Full-text search indexes *everything*. AI fails to know which code is actually compiled for a specific hardware target.
+3. **Loss of Spatial Awareness**: LLMs lose the "folder structure" context. They don't know that `/drivers/net/wireless` is physically and logically distinct from `/fs/ext4/`.
+4. **Static Tooling**: Current code indexers are read-only. When an AI discovers a complex bug or deduces an indirect function pointer, it cannot save that knowledge back to the database for future sessions.
 
 ---
 
-## 4. High-Level Architecture
+## 3. High-Level Architecture (Strictly Decoupled)
 
-Code Crawler is composed of modular plugins orchestrated by a central engine.
+To accommodate any future language (Python, Rust, Go), the architecture strictly separates the **Core Engine** from the **Language Crawlers**. 
 
 ```text
 code-crawler/
-├── pyproject.toml              # Modern Python package tracking (uv/hatchling)
-├── core/
-│   ├── engine.py               # Orchestrator (index, watch, mcp)
-│   ├── build_analyzer.py       # Yocto/Bitbake/Kconfig/CompileCommands interface
-│   └── incremental_tracker.py  # Cache invalidation (hashes/mtimes)
-├── crawlers/                   # Plugin System for Parsers
-│   ├── c_cpp/                  # Tree-sitter + libclang parser
-│   └── rust/                   # Future extensible support
-├── analyzers/
-│   └── summarizer.py           # Background LLM prompt orchestrator
+├── pyproject.toml              
+├── core/                       # MAIN ENGINE (Database, MCP, File Watcher)
+│   ├── engine.py               # Orchestrator
+│   ├── interfaces.py           # ABSTRACT API CONTRACT (Defines how crawlers talk to Core)
+│   ├── build_analyzer.py       
+│   └── tracker.py              
+├── crawlers/                   # LANGUAGE PLUGINS (Dumb parsers)
+│   ├── c_cpp/                  # Implements interfaces.py for C/C++ (Tree-sitter)
+│   ├── python/                 # Implements interfaces.py for Python
+│   └── rust/                   # Implements interfaces.py for Rust
 ├── storage/                    
-│   └── kuzu_db.py              # Embedded Graph+Vector DB schema and queries
-├── ui/                         # Human-readable diagnostic dashboard
-│   └── web_viewer/             # FastAPI + Vis.js + CodeMirror
+│   └── kuzu_db.py              # Single source of truth (Graph + Vector)
 └── mcp/                        
-    └── server.py               # MCP Server exposing tools
+    └── server.py               # Exposes BOTH Read and Write APIs to LLMs
 ```
 
 ---
 
+## 4. The Unified Crawler API Contract
+
+Language plugins (`crawlers/`) are NOT allowed to talk to the database. They must strictly use the standard APIs defined in `core/interfaces.py`. 
+
+**The Flow:**
+1. Core Engine tells a crawler: `Parse file at /src/wifi.c`.
+2. Crawler runs its language-specific AST tools (Tree-sitter, libclang).
+3. Crawler yields highly standardized dataclasses back to Core: `SymbolNode`, `ReferenceEdge`.
+4. Core Engine securely injects these into the Graph.
+
+*Result: Adding a new language takes 1 day, as you only have to write a regex/AST parser that outputs standard `SymbolNode` objects.*
+
+---
+
 ## 5. Storage Model: The Hybrid Database
-Using **KuzuDB** (an embedded property-graph database), we seamlessly blend relationships and vector similarity.
+Using **KuzuDB**, we blend structural relationships, directory trees, and vector similarity into one queryable space.
 
-### The Graph Schema
-- **Nodes**: `File`, `Symbol` (Function, Struct, Macro, Global), `BuildConfig`.
+### The Spatial Graph Schema
+- **Nodes**: `Directory`, `File`, `Symbol` (Function, Class, Struct), `BuildConfig`.
 - **Edges**: 
-  - `(File)-[:CONTAINS]->(Symbol)`
+  - `(Directory)-[:CONTAINS_DIR]->(Directory)` *(Creates the folder tree natively)*
+  - `(Directory)-[:CONTAINS_FILE]->(File)`
+  - `(File)-[:CONTAINS_SYMBOL]->(Symbol)`
   - `(Symbol)-[:CALLS]->(Symbol)`
-  - `(Symbol)-[:USES_MACRO]->(Symbol)`
-  - `(Symbol)-[:DEPENDS_ON]->(BuildConfig)` (e.g., linking a function to `CONFIG_WIFI_MAC`)
+  - `(Symbol)-[:DEPENDS_ON]->(BuildConfig)`
 
-### The Vector Index
-Each `Symbol` node gets a 384-dimensional embedding generated from its AI summary, mapped directly within KuzuDB, allowing queries like:
-> "Find functions similar to 'mac address initialization' but ONLY if they depend on CONFIG_ATH11K."
+### The Vector Index (Semantic Layer)
+Every Node (even Directories) gets an AI-generated text summary that is converted into a 384-dimensional mathematical vector.
 
 ---
 
-## 6. Pipeline Execution Flow
+## 6. Bi-Directional AI Agents (Read & Write APIs)
 
-### 1. Build Analysis (The "What to Index" Phase)
-- Detects `bitbake`, Kconfig (`.config`), or `compile_commands.json`.
-- Extracts active `SRC_URI`, include directories, and `#define` flags.
-- Throws away standard libraries or unused hardware layers to save tokens.
+Traditionally, MCP servers are Read-Only. Code Crawler provides **Bi-directional APIs** so external apps or LLMs can actively construct the knowledge base.
 
-### 2. AST Extraction (The "Crawler" Phase)
-- Runs `tree-sitter-c`/`tree-sitter-cpp` to walk the code.
-- Captures signatures, start/end lines, and extracts relationships (`CALLS`, `USES`).
-- Fallback to `libclang` for complex macro expansions if Tree-sitter fails.
+### Reading Data (Context Gathering)
+- `get_folder_structure(path="/drivers/net")`: AI retrieves the spatial directory tree.
+- `get_call_hierarchy_up(func="wlan_init")`: AI asks what calls this function.
+- `semantic_search(query="Where are IV vectors verified?", filter="scope=/drivers")`
 
-### 3. AI Summarization (The "Enrichment" Phase)
-- For every captured function, an asynchronous task calls a local LLM (e.g., Ollama).
-- **Prompt strategy**: *"Summarize this C function in 2 sentences. Note any hardware register interactions, locking semantics, and what build flags gate it."*
-- Generates the vector embedding and saves it to KuzuDB.
-
-### 4. Agent Consumption (The MCP Phase)
-- Developer asks their IDE a question.
-- IDE calls MCP Tools: `get_call_hierarchy(func)`, `search_semantic(query)`, `get_build_context(file)`.
-- Tools run Cypher queries against KuzuDB and return compressed, hyper-relevant context.
+### Writing Data (Active Knowledge Injection)
+When an LLM figures something out, it can call these APIs to permanently enrich the database:
+- `add_architecture_note(node_id, note)`: AI attaches a human-readable engineering note to a `Directory` or `File`. (e.g., *"This folder handles legacy WEP encryption, do not refactor."*)
+- `tag_symbol(symbol_id, tag)`: AI tags a function dynamically (e.g. `[SECURITY_CRITICAL]`, `[RACE_CONDITION_PRONE]`).
+- `inject_relationship(source_id, target_id, type="CALLS_VIA_POINTER")`: C code uses many function pointers which AST parsers miss. An AI can deduce the pointer and manually draw a `[:CALLS]` line in the database so future queries know they are connected!
 
 ---
 
-## 7. Suggested Improvements & Refinements (V2.0 Addition)
+## 7. Execution Flow & Real-Time Sync
 
-Based on the initial design, here are critical improvements to ensure success in the embedded domain:
-
-### A. Contextual "Locking & Concurrency" Extraction
-Embedded systems (especially kernel drivers) crash due to bad locking (Spinlocks, Mutexes, IRQ contexts). 
-**Improvement**: The AI Summarizer prompt must explicitly be instructed to extract and document *Locking Semantics* (e.g., *"Takes `wlan_mac_lock` before executing"*). This is priceless data for an LLM trying to debug a race condition.
-
-### B. Multi-Architecture / Variant Scoping
-In Yocto, the exact same C file might be compiled twice in one build (e.g., `native` toolchain vs `target` ARM toolchain), having different active `#ifdef` paths. 
-**Improvement**: The Graph database nodes must be namespace-aware. A file parsed under the `x86` context shouldn't overwrite the `ARM` context's data.
-
-### C. Language Server Protocol (LSP) Piggybacking
-Instead of building the C/C++ parser entirely from scratch, embedded devs usually already have `clangd` running. 
-**Improvement**: Add an adapter that can ingest an existing `.cache/clangd` index. `clangd` already computes the perfect call graph natively; Code Crawler could just ingest this graph and focus solely on the AI Summarization and MCP layers, saving massive CPU time.
-
-### D. File-Watcher Delta Updates
-Re-indexing a 5M LOC repo is costly. 
-**Improvement**: Integrate a filesystem watcher (`watchdog`) combined with git hooks. If a developer edits `wifi_drv.c`, only that file's AST is re-parsed, and only its altered functions are sent back to the local LLM for re-summarization. Incremental updates keep the database real-time.
+1. **Crawler Pass**: Indexer walks directories, generating `Directory` and `File` nodes.
+2. **Parser Pass**: Standardized language plugins extract `Symbol` nodes.
+3. **Summarizer Pass**: Cheap background AI summarizes functions.
+4. **Developer Session**: Dev opens IDE -> AI queries the graph to solve a problem -> AI discovers an undocumented struct relation -> AI calls `inject_relationship()` to improve the Graph for all future developers.
