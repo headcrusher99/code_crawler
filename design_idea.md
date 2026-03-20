@@ -1,125 +1,98 @@
-# Code Crawler (Semantic Code Indexer) – Enhanced Edition v2
+# Code Crawler: System Architecture & Design Specification
 
-**Version**: 2.0 (March 2026)  
-**Goal**: Turn Code Crawler into a production-grade, build-system-aware, multi-language, hybrid-graph/vector MCP server optimized for massive embedded C/C++ projects (Yocto, Buildroot, OpenWrt, Linux kernel, RDK-B) while remaining extensible to Python and beyond.
-
----
-
-## 1. Why the Original Needs These Improvements
-
-In massive embedded Linux codebases (like OpenWrt or Yocto builds), a developer typically tinkers with only a tiny fraction of the code—custom drivers, specific serial/GPIO pins, device tree configurations (`.dts`), or custom vendor layers. The rest of the codebase contains millions of lines of untouched, upstream code (e.g., `busybox`, `coreutils`, core kernel subsystems).
-
-Raw file parsing and simple `grep` searches fail on these multi-million line codebases because they are heavily gated by `#ifdef` macros and Kconfig options. If an LLM uses traditional tools, it wastes tokens scanning irrelevant code. Existing state-of-the-art tools (like code-graph-rag, CocoIndex, Arbor) prove that AST-based graph processing and smart embeddings work, but they lack build-system awareness.
-
-We will bridge this gap with **build-system-aware selective indexing**. The LLM will only index and analyze what matters, ignoring the untouched core utilities unless explicitly required, ensuring high-speed context resolution.
-
-### 1.1 Lessons from the State-of-the-Art
-
-Recent research (2025–2026) shows that **deterministic AST-derived knowledge bases (DKB) outperform LLM-generated knowledge graphs** for code understanding. They provide more reliable coverage, better multi-hop grounding for GraphRAG, and significantly lower indexing costs. Code Crawler adopts this principle: the graph is built from deterministic AST parsing, and LLMs are used *only* for summarization, never for graph construction.
-
-Key tools and their gaps that Code Crawler fills:
-
-| Tool | Strength | Gap Code Crawler Fills |
-|------|----------|----------------------|
-| **Arbor** | Structural "Logic Forest" graph via Rust AST engine | No build-system awareness, no `#ifdef` resolution |
-| **CocoIndex** | Real-time incremental indexing, Rust core + Python API | No Kconfig/Yocto integration, no embedded focus |
-| **Code-Graph-RAG** | Multi-language knowledge graph + MCP | Misses build-config-driven code paths |
-| **CodePrism** | Universal AST, cross-file analysis | No selective indexing, no embedded build systems |
+**Goal**: A definitive, LLM-first, team-live-syncing, pre-trained-knowledge-aware semantic indexer for massive embedded projects (RDK-B, prplOS, OpenWrt, Buildroot, Android AOSP, Yocto, Linux kernel). Code Crawler minimizes context-window taxation and acts as an intelligence layer with zero retrieval overhead for AI agents.
 
 ---
 
-## 2. High-Level Architecture (Modular by Design)
+## 1. System Vision & Philosophy
+
+Code Crawler solves the hardest problems in embedded software analysis: codebase size (often millions of lines), build-system complexity (`#ifdef` hell, Bitbake recipes), and the gap between static code and runtime execution (IPC, hardware logs).
+
+### 1.1 Core Principles
+1. **Agent-Centric Retrieval**: Every LLM interaction with the index must cost $\le 1$ tool call or leverage pre-materialized context bundles. No multi-hop cognitive tax for agents.
+2. **Deterministic Graph + Probabilistic Intelligence**: The knowledge graph is 100% deterministic (AST + build configs), while LLMs handle classification, summarization, and proactive patch generation.
+3. **Context Window Optimization**: Token processing is expensive. By categorizing code into strict tiers and priority scores, Code Crawler ensures 95% token reduction for agents without losing conceptual accuracy.
+4. **Team as a Compute Swarm**: Indexing a 5-million line codebase avoids redundancy. It leverages the team's local AI compute as a distributed swarm, pooling intelligent summaries into a compound team memory.
+
+### 1.2 The Context Window Problem
+
+The single biggest constraint on LLM-assisted coding is context window utilisation:
+
+| Problem | Impact | Code Crawler Solution |
+|---------|--------|-----------------------|
+| **"Lost in the middle"** | Models perform worst on info buried in the middle of contexts | Tiered indexing ensures only high-priority code enters context |
+| **Quadratic attention cost** | Token processing is roughly O(n²); 90% reduction ≈ 99% compute reduction | IndexManifests compress files from ~15K tokens to ~500 tokens |
+| **Cost explosion** | Scanning a full embedded tree per query is economically insane | Priority scoring ensures only relevant code is retrieved |
+| **Multi-hop failures** | Intermediary tool calls are failure points for LLM agents | Pre-materialised views eliminate multi-step orchestration |
+
+---
+
+## 2. High-Level Architecture
 
 ```text
 code-crawler/
 ├── core/                  # Python orchestrator (main engine)
 │   ├── pipeline.py        # Indexing pipeline coordinator
 │   ├── file_selector.py   # Build-aware file filtering
+│   ├── swarm_sync.py      # Distributed Swarm Indexing (P2P workload sharing)
 │   └── hasher.py          # Content hashing for incremental updates
 ├── crawlers/
 │   ├── c/                 # C/C++ (Tree-sitter + libclang hybrid)
-│   │   ├── ts_parser.py   # Tree-sitter: fast structural AST
-│   │   └── clang_resolver.py  # libclang: semantic resolution (#ifdef, types, cross-TU)
 │   ├── dts/               # Device Tree Source parser
-│   ├── python/            # Next phase
-│   └── __init__.py        # Plugin loader (importlib + entry points)
+│   ├── python/            # Python parser
+│   ├── shell/             # Shell script parser
+│   └── ipc/               # Cross-process definition parser (D-Bus, AIDL, Ubus)
 ├── analyzers/
-│   └── build/             # Yocto/Bitbake, Buildroot/OpenWrt, Kernel
+│   └── build/             # Yocto, Buildroot, Linux Kernel parsers
 │       ├── detector.py    # Auto-detect build system type
 │       ├── yocto.py       # Parse recipes, layers, DISTRO_FEATURES
 │       ├── buildroot.py   # Parse .config, package selections
 │       ├── kernel.py      # Parse Kconfig, generate compile_commands.json
 │       └── compile_db.py  # Unified compile_commands.json handler
-├── storage/               # DuckDB (graph + vector + full-text in one)
-│   ├── schema.py          # Graph schema (DuckPGQ)
-│   ├── vector.py          # Vector index (vss extension)
-│   └── migrations.py      # Schema versioning
-├── mcp/                   # Official Python MCP SDK server
-│   ├── server.py          # MCP server entry point
-│   ├── tools.py           # Tool definitions (workflow-oriented)
-│   └── resources.py       # MCP resource definitions
-├── ui/                    # FastAPI + interactive web dashboard
-├── config/                # .codecrawler.toml
-├── summarizer/            # Cheap LLM pass (Ollama / GPT-4o-mini / local)
-│   ├── batch.py           # Async batch summarizer
-│   └── prompts.py         # Structured prompt templates
-└── plugins/               # Future: Rust extensions for speed
+├── tiering/               # Tiering & Priority
+│   ├── llm_proposer.py    # Sub-7B model directory classifier (i0-i3)
+│   ├── priority_scorer.py # 6-dimension self-tuning priority Math
+│   └── manifest_builder.py# Pre-calculates 1-call IndexManifests for agents
+├── storage/               # DuckDB multi-model backend
+│   ├── schema.py          # Relational + Graph (DuckPGQ) + Vector (vss)
+│   ├── git_graphs.py      # Git-aware branch sub-graph management
+│   └── vector.py          # Vector index configurations
+├── intelligence/          # Background AI and inference
+│   ├── proactive_agent.py # Async fix/patch generation on contested variables
+│   ├── summarizer.py      # Confidence-aware tiered summarization
+│   └── telemetry.py       # Serial log, dmesg, and crash dump correlator
+├── debugger/              # Runtime data integration
+│   ├── trace_parser.py    # Parse GDB traces, stack frames
+│   ├── sanitizer_parser.py # Parse ASan/Valgrind output
+│   └── runtime_scorer.py  # Compute runtime frequency scores
+├── collaboration/         # Team live-sync
+│   ├── master_sync.py     # Delta sync to shared master DB
+│   └── git_patcher.py     # Semantic git patch → graph update
+├── mcp/                   # Official Model Context Protocol Server
+├── ui/                    # Code Nebula (FastAPI + Three.js 3D Web UI)
+├── config/                # .codecrawler.toml settings
+└── plugins/               # Drop-in Rust/C++ extensions for speed
 ```
-
-**Language support strategy**:
-- **Phase 1**: C/C++ only (MVP for embedded) + Device Tree (`.dts`/`.dtsi`).
-- **Phase 2**: Python + Shell scripts (common in Yocto recipes).
-- **Phase N**: Drop-in folder `crawlers/<lang>/` with a `Parser` class implementing an abstract base `CodeParser`.
 
 ---
 
-## 3. Database – Multi-Model Single Backend (Spatially Aware)
+## 3. Storage & Data Model
 
-> [!CAUTION]
-> **KuzuDB was archived by its maintainers in October 2025** and is no longer maintained. The original design selected KuzuDB, but it is no longer a viable choice. We've evaluated alternatives including community forks (Ladybug, Bighorn), but these lack proven stability.
+**DuckDB** with `DuckPGQ` (property graph) and `vss` (vector similarity) provides relational queries, graph traversal, full-text search, and semantic similarity in a single embedded file (eliminating separate vector/graph database deployments).
 
-### 3.1 Chosen Backend: DuckDB (Multi-Model)
+The database fundamentally physically mirrors the source code directory structure, mapping AI reasoning directly to spatial/file locations.
 
-**DuckDB** with the `DuckPGQ` extension (property graph queries) and the `vss` extension (vector similarity search) provides all three capabilities in a single embedded file:
-
-| Capability | Extension | Purpose |
-|-----------|-----------|---------|
-| **Graph queries** | `DuckPGQ` | Cypher-like path traversal, call hierarchies |
-| **Vector search** | `vss` (HNSW) | Semantic similarity on code embeddings |
-| **Full-text search** | Built-in FTS | Keyword search, identifier lookup |
-| **Relational** | Core DuckDB | Metadata, configs, file inventory |
-
-**Why DuckDB over alternatives:**
-- *Embedded, single-file* – no external server (unlike Neo4j, FalkorDB)
-- *Blazing fast analytics* – columnar storage optimized for OLAP queries over millions of nodes
-- *Python-native* – first-class Python API, zero-copy integration with Pandas/Polars
-- *Actively maintained* – strong community + DuckDB Labs backing (unlike archived KuzuDB)
-- *Multi-model* – avoids running separate graph + vector databases
-
-### 3.2 Crucial Database Structure Requirement
-
-The database must maintain a node/folder structure exactly mirroring the source code's physical directory structure. Inside each "folder node", the corresponding data nodes (files, functions, structs) reside. This spatial alignment is critical for LLM context: it lets the AI reason about *where* code lives, not just *what* it does.
-
-### 3.3 Schema (Property Graph via DuckPGQ)
+### 3.1 Unified Schema
 
 ```sql
--- Node Tables
-CREATE TABLE Directory (id BIGINT PRIMARY KEY, path TEXT UNIQUE, name TEXT, 
-                        summary TEXT, depth INT, is_custom BOOL);
-CREATE TABLE File (id BIGINT PRIMARY KEY, path TEXT UNIQUE, hash TEXT, 
-                   last_modified TIMESTAMP, is_custom BOOL, language TEXT,
-                   loc INT, embedding FLOAT[384]);
-CREATE TABLE Function (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id),
-                       name TEXT, signature TEXT, start_line INT, end_line INT,
-                       summary TEXT, complexity INT, embedding FLOAT[384]);
-CREATE TABLE Struct (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id),
-                     name TEXT, summary TEXT, members TEXT[]);
-CREATE TABLE Macro (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id),
-                    name TEXT, value TEXT, is_config_guard BOOL);
-CREATE TABLE BuildConfig (id BIGINT PRIMARY KEY, key TEXT, value TEXT, 
-                          source_file TEXT, build_system TEXT);
-CREATE TABLE DeviceTreeNode (id BIGINT PRIMARY KEY, path TEXT, compatible TEXT[],
-                             properties JSONB, source_file TEXT);
+-- Core Structural Tables
+CREATE TABLE Directory (id BIGINT PRIMARY KEY, path TEXT UNIQUE, name TEXT, summary TEXT, depth INT, is_custom BOOL);
+CREATE TABLE File (id BIGINT PRIMARY KEY, path TEXT UNIQUE, hash TEXT, last_modified TIMESTAMP, is_custom BOOL, language TEXT, loc INT, embedding FLOAT[384]);
+CREATE TABLE Function (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id), name TEXT, signature TEXT, start_line INT, end_line INT, summary TEXT, complexity INT, embedding FLOAT[384]);
+CREATE TABLE Struct (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id), name TEXT, summary TEXT, members TEXT[]);
+CREATE TABLE Macro (id BIGINT PRIMARY KEY, file_id BIGINT REFERENCES File(id), name TEXT, value TEXT, is_config_guard BOOL);
+CREATE TABLE BuildConfig (id BIGINT PRIMARY KEY, key TEXT, value TEXT, source_file TEXT, build_system TEXT);
+CREATE TABLE DeviceTreeNode (id BIGINT PRIMARY KEY, path TEXT, compatible TEXT[], properties JSONB, source_file TEXT);
 
 -- Edge Tables
 CREATE TABLE contains_dir (parent_id BIGINT, child_id BIGINT);
@@ -128,12 +101,56 @@ CREATE TABLE contains_func (file_id BIGINT, func_id BIGINT);
 CREATE TABLE calls (caller_id BIGINT, callee_id BIGINT, call_site_line INT);
 CREATE TABLE uses_struct (func_id BIGINT, struct_id BIGINT);
 CREATE TABLE includes_file (source_id BIGINT, target_id BIGINT);
-CREATE TABLE guarded_by (func_id BIGINT, config_id BIGINT);  -- #ifdef → BuildConfig
-CREATE TABLE dt_binds_driver (dt_node_id BIGINT, func_id BIGINT);  -- DT compatible → probe()
+CREATE TABLE guarded_by (func_id BIGINT, config_id BIGINT);
+CREATE TABLE dt_binds_driver (dt_node_id BIGINT, func_id BIGINT);
 
--- Property Graph Definition (DuckPGQ)
+-- Cross-Boundary & Telemetry Tables
+CREATE TABLE calls_over_ipc (caller_func_id BIGINT, callee_func_id BIGINT, interface_name TEXT);
+CREATE TABLE LogLiteral (id BIGINT PRIMARY KEY, hash TEXT, literal_string TEXT, log_level TEXT);
+CREATE TABLE emits_log (func_id BIGINT REFERENCES Function(id), log_id BIGINT REFERENCES LogLiteral(id));
+
+-- Tiering & Intelligence Tracking
+CREATE TABLE Tier (id BIGINT PRIMARY KEY, path TEXT UNIQUE, tier INT CHECK (tier BETWEEN 0 AND 3), source TEXT, confidence FLOAT, last_classified TIMESTAMP);
+CREATE TABLE Variable (id BIGINT PRIMARY KEY, func_id BIGINT REFERENCES Function(id), file_id BIGINT REFERENCES File(id), name TEXT, var_type TEXT, is_global BOOL, is_static BOOL, usage_count INT, write_count INT, priority_score FLOAT, embedding FLOAT[384]);
+CREATE TABLE IndexManifest (file_id BIGINT PRIMARY KEY REFERENCES File(id), manifest_json JSONB);
+CREATE TABLE PriorityScore (func_id BIGINT PRIMARY KEY REFERENCES Function(id), tier_weight FLOAT, usage_frequency FLOAT, graph_centrality FLOAT, build_guard_activation FLOAT, runtime_frequency FLOAT, recency_score FLOAT, composite_score FLOAT);
+CREATE TABLE SummaryMeta (entity_id BIGINT, entity_type TEXT, model_used TEXT, confidence FLOAT, version INT, created_at TIMESTAMP, PRIMARY KEY (entity_id, entity_type));
+
+-- Runtime & Debug Data
+CREATE TABLE RuntimeTrace (id BIGINT PRIMARY KEY, func_id BIGINT REFERENCES Function(id), source TEXT, hit_count INT, avg_stack_depth FLOAT, has_memory_error BOOL, last_seen TIMESTAMP, trace_data JSONB);
+
+-- Collaboration & Feedback
+CREATE TABLE SyncLog (id BIGINT PRIMARY KEY, entity_id BIGINT, entity_type TEXT, change_type TEXT, changed_by TEXT, commit_sha TEXT, timestamp TIMESTAMP, delta_json JSONB);
+CREATE TABLE Annotation (id BIGINT PRIMARY KEY, entity_id BIGINT, entity_type TEXT, annotation_type TEXT, content TEXT, model TEXT, confidence FLOAT, approved BOOL DEFAULT FALSE, created_at TIMESTAMP);
+```
+
+### 3.2 Pre-Materialized LLM Views
+
+```sql
+-- One-call view: all high-priority functions in a layer
+CREATE VIEW LLM_HighPriority AS 
+  SELECT f.*, ps.composite_score, t.tier, sm.confidence as summary_confidence
+  FROM Function f JOIN PriorityScore ps ON f.id = ps.func_id JOIN contains_func cf ON f.id = cf.func_id JOIN contains_file cfl ON cf.file_id = cfl.file_id JOIN Tier t ON t.path = (SELECT path FROM File WHERE id = cf.file_id)
+  WHERE t.tier >= 2 ORDER BY ps.composite_score DESC;
+
+-- One-call view: shared state flag for proactive remediation
+CREATE VIEW LLM_SharedState AS
+  SELECT v.*, f.name as func_name, fi.path as file_path
+  FROM Variable v JOIN Function f ON v.func_id = f.id JOIN File fi ON v.file_id = fi.id
+  WHERE v.is_global = TRUE AND v.write_count > 1 ORDER BY v.write_count DESC;
+
+-- One-call view: functions flagged by debugger/runtime data
+CREATE VIEW LLM_RuntimeHotspots AS
+  SELECT f.*, rt.hit_count, rt.has_memory_error, rt.source as trace_source, ps.composite_score
+  FROM Function f JOIN RuntimeTrace rt ON f.id = rt.func_id LEFT JOIN PriorityScore ps ON f.id = ps.func_id
+  ORDER BY rt.hit_count DESC;
+```
+
+### 3.3 Graph Definition (DuckPGQ) & Vectors
+
+```sql
 CREATE PROPERTY GRAPH code_graph
-  VERTEX TABLES (Directory, File, Function, Struct, Macro, BuildConfig, DeviceTreeNode)
+  VERTEX TABLES (Directory, File, Function, Struct, Macro, BuildConfig, DeviceTreeNode, Variable, LogLiteral)
   EDGE TABLES (
     contains_dir SOURCE KEY (parent_id) REFERENCES Directory DESTINATION KEY (child_id) REFERENCES Directory,
     contains_file SOURCE KEY (dir_id) REFERENCES Directory DESTINATION KEY (file_id) REFERENCES File,
@@ -142,476 +159,326 @@ CREATE PROPERTY GRAPH code_graph
     uses_struct SOURCE KEY (func_id) REFERENCES Function DESTINATION KEY (struct_id) REFERENCES Struct,
     includes_file SOURCE KEY (source_id) REFERENCES File DESTINATION KEY (target_id) REFERENCES File,
     guarded_by SOURCE KEY (func_id) REFERENCES Function DESTINATION KEY (config_id) REFERENCES BuildConfig,
-    dt_binds_driver SOURCE KEY (dt_node_id) REFERENCES DeviceTreeNode DESTINATION KEY (func_id) REFERENCES Function
+    dt_binds_driver SOURCE KEY (dt_node_id) REFERENCES DeviceTreeNode DESTINATION KEY (func_id) REFERENCES Function,
+    calls_over_ipc SOURCE KEY (caller_func_id) REFERENCES Function DESTINATION KEY (callee_func_id) REFERENCES Function,
+    emits_log SOURCE KEY (func_id) REFERENCES Function DESTINATION KEY (log_id) REFERENCES LogLiteral
   );
 
--- Vector Index for Semantic Search
 INSTALL vss; LOAD vss;
-CREATE INDEX func_embedding_idx ON Function USING HNSW (embedding)
-  WITH (metric = 'cosine');
-CREATE INDEX file_embedding_idx ON File USING HNSW (embedding)
-  WITH (metric = 'cosine');
+CREATE INDEX func_embedding_idx ON Function USING HNSW (embedding) WITH (metric = 'cosine');
+CREATE INDEX file_embedding_idx ON File USING HNSW (embedding) WITH (metric = 'cosine');
+CREATE INDEX var_embedding_idx ON Variable USING HNSW (embedding) WITH (metric = 'cosine');
 ```
-
-**Key additions over v1 schema**:
-- `Macro` nodes – track `#define` guards and config-dependent macros
-- `DeviceTreeNode` – first-class DT support with `compatible` string matching
-- `guarded_by` edges – link functions to their `#ifdef CONFIG_*` guards
-- `dt_binds_driver` edges – link Device Tree `compatible` strings to driver `probe()` functions
-- `includes_file` edges – track `#include` chains for dependency resolution
-- Embedding vectors directly on `Function` and `File` nodes for hybrid search
-- `complexity` field on functions (cyclomatic complexity from AST)
 
 ---
 
-## 4. Main Engine Design (Orchestrator & Smart Indexing)
+## 4. LLM-Assisted Tiering & Classification
 
-### 4.1 CLI Entry Point
+### 4.1 The Four Index Tiers
+
+| Tier | Label | What Gets Indexed | Examples |
+|------|-------|-------------------|----------|
+| **i0** | Ignore | Nothing. Completely skipped. | binutils, gcc, glibc, busybox, toolchain, kernel upstream untouched subsystems |
+| **i1** | Stub | File name + path + hash only | System libs, coreutils, generic drivers |
+| **i2** | Skeleton | Signatures + call edges + struct defs (no summaries) | Integration layers, APIs, OpenWrt feeds, Android HAL stubs |
+| **i3** | Full | Complete AST + summaries + vectors + variable tracking | Custom vendor layers, developer HAL, prplOS TR-181, app code |
+
+### 4.2 Two-Phase Classification Pipeline
+
+Code Crawler avoids brittle regex by utilizing the **pre-trained knowledge** of local LLMs. Models trained on giant codebases instinctively recognize the difference between Linux kernel internals and vendor-custom drivers.
+
+```text
+Phase 1: Pre-Trained Knowledge Classification
+─────────────────────────────────────────────────
+Directory tree + build metadata (Yocto layers, .config, IMAGE_INSTALL, DT files)
+    ▼
+Cheap local LLM (Llama-3.2-3B / Qwen2.5-3B)
+    ▼
+Initial i0–i3 proposal for every top-level directory
+
+Phase 2: Git Evidence Validation
+────────────────────────────────
+For each directory classified as i0 or i1:
+    git log --oneline --since="6 months ago" -- <dir>
+    ├── Has recent commits? → Bump to i2 minimum
+    └── No recent commits? → Keep classification
+
+Phase 3: Build-Config Cross-Reference
+───────────────────────────────────────────────
+Cross-reference with enabled packages, active configs, IMAGE_INSTALL
+    ├── Directory contains active build target? → Bump to i2+
+    └── Directory excluded from build? → Keep i0/i1
+```
+
+---
+
+## 5. Priority Scoring System (Mathematical Framework)
+
+Every indexed function evaluates a Priority Score, eliminating bloated contexts. 
+
+### 5.1 The Composite Score Formula
+
+```text
+composite_score = (tier_weight    × W_t) +
+                  (usage_freq     × W_u) +
+                  (centrality     × W_c) +
+                  (build_active   × W_b) +
+                  (runtime_freq   × W_r) +
+                  (recency        × W_e)
+```
+
+| Dimension | Default Weight | Formula / Source | What It Tells the LLM |
+|-----------|----------------|------------------|-----------------------|
+| **Tier** | `W_t = 0.25` | `tier_level / 3.0` | "This is code the developer is actively working on." |
+| **Usage** | `W_u = 0.20` | `call_count(f) / max_counts` | Identify "hub" functions with massive ripple impacts. |
+| **Centrality** | `W_c = 0.15` | `betweenness_centrality()` | Identifies graph bottlenecks and bridging APIs. |
+| **Build Guard** | `W_b = 0.10` | 1.0 if `#ifdef` matches config | Unused paths are effectively dead tokens. |
+| **Runtime**| `W_r = 0.15` | From debugger trace hits | Actual runtime vs static expectation. |
+| **Recency** | `W_e = 0.15` | `1/(1 + days_since_mod)` | Smooth decay exponential backoff for modified code. |
+
+**Self-Tuning Weights (Meta-Learning):** The system continuously adjusts `W_t` through `W_e`. If an engineering team heavily queries functions based on recent commits or crash traces, the system auto-adjusts `W_e` and `W_r` iteratively over weeks via graph query logging.
+
+---
+
+## 6. Parsing & Cross-Boundary Edge Resolution
+
+### 6.1 Per-Language Universal Extraction
+Every language module output normalises into the same elements: Functions, Variables, Calls, Parameters, Returns, Structs, Macros, DT Bindings. 
+
+**Variable Tracking**: Variables are first-class nodes. `Global` variables track full cross-function `write_count` metrics. Write counts $> 1$ trigger proactive logic (see Section 8).
+
+### 6.2 IPC Semantic Edges (The Missing Link)
+In embedded Linux systems, business logic jumps processes boundaries. Code Crawler builds native AST edges spanning D-Bus XMLs, Android AIDL, protobufs, and JSON-RPC.
+- If a Python app invokes a `Wifi.SetSSID` DBus signal, an edge links that Python function directly to the C++ daemon handler. Zero LLM context drops across process domains.
+
+### 6.3 Build System & Device Tree Awareness
+- **Yocto / Buildroot / Kernel**: Native parsing of `.config`, layer priority, and Kconfig flags constructs a global `#ifdef` symbol table. libclang leverages this to aggressively filter out dead `#else` branches.
+- **Hardware Integration**: Extracts `.dtsi` `compatible` strings and dynamically wires them to `probe()` functions in the AST via `dt_binds_driver`. 
+
+---
+
+## 7. Telemetry & Runtime Data
+
+Static analysis tells you what code *could* do. Runtime data tells you what it *actually does*.
+
+### 7.1 Serial Log Correlation (Mapping Telemetry)
+Embedded developers live in serial output. Code Crawler runs a pass specifically for logging macros (`ALOGE`, `printk`, `RDK_LOG`).
+- Literals are stripped and hashed into `LogLiteral` nodes.
+- Agents receive raw 50-line crash logs, and the engine hashes the strings to instantaneously teleport to the correct 5 AST contexts.
+
+### 7.2 Debugger Integration Pipeline
+| Debugger Signal | How It Improves the Index |
+|-----------------|---------------------------|
+| **Stack traces (GDB)** | Hit-count weight modifier applied to hot-path functions. |
+| **Breakpoint hits** | Alters static assumptions ("A calls B" vs "A calls B 100K times/sec"). |
+| **Sanitisers (Valgrind/ASan)** | Emits automatic `warning` annotations securely attached to `Function` nodes. |
+
+---
+
+## 8. Proactive AI & Team Live-Sync
+
+### 8.1 Tiered Summarisation & Confidence
+- Small local models pre-process 0.6-confidence, 2-sentence summaries.
+- When an agent/developer examines a file, a background thread lazily upgrades it via a larger model (e.g., Claude 3.5), replacing the summary atomically with a 0.9-confidence, high-context explanation.
+
+### 8.2 Proactive Background Remediation
+The engine acts as a background team member. If an active `Variable` achieves a high `write_count` spanning multiple execution contexts (or interrupts) without a `mutex` in the AST, the background daemon proactively generates a git patch to secure the data, surfacing it inside the UI as a `suggested_patch` annotation.
+
+### 8.3 Collaboration via Swarm Compute
+Indexing millions of lines is computationally heavy.
+- **Swarm Compute**: When a team updates a large vendor drop, local daemons on the LAN divide the AST/summarisation load (Dev A's GPU processes `fs/`, Dev B processes `net/`), avoiding redundant processing.
+- **Master Database Sync**: The resulting metadata, tier upgrades, and verified LLM annotations propagate back to a shared Delta Master DB (`SyncLog`).
+- **Git-Aware Sub-Graphs**: Developers working on messy local `feature/*` branches have their new nodes isolated in branch-specific sub-graphs, ensuring experimental annotations don't pollute the master intelligence engine until a merge commits.
+
+### 8.4 Git Semantic Patching
+On `git pull`, the DB executes incremental updates via file hashing. For deeply understood `i3` files, an LLM compares the git patch against the `IndexManifest` to generate a natural-language semantic graph delta without needing a full-file AST rescrape.
+
+---
+
+## 9. Main Engine Design
+
+### 9.1 CLI Interface
 
 ```bash
 codecrawler index --project yocto --image rdk-b --config .codecrawler.toml
-codecrawler index --project kernel --config-file /path/to/.config
 codecrawler mcp             # starts MCP server
-codecrawler ui              # starts interactive dashboard
+codecrawler ui              # starts Code Nebula 3D dashboard
 codecrawler watch           # real-time incremental daemon
-codecrawler status          # show index stats and health
-codecrawler export          # export graph as JSON/DOT for external tools
+codecrawler sync            # Swarm sync with team master DB
+codecrawler ingest-logs     # Ingest fleet crash logs / serial traces
+codecrawler status          # show index statistics
 ```
 
-### 4.2 Core Pipeline & Selective Indexing Flow
+### 9.2 The Indexing Pipeline
 
 ```text
-┌─────────────────────────────────────────────────────────────────────┐
-│                        INDEXING PIPELINE                            │
-│                                                                     │
-│  ┌──────────┐    ┌───────────┐    ┌────────────┐    ┌───────────┐  │
-│  │ 1. Quick  │───▶│ 2. Build  │───▶│ 3. Config  │───▶│ 4. File   │  │
-│  │ Dir Scan  │    │ Detector  │    │ Analyzer   │    │ Selector  │  │
-│  └──────────┘    └───────────┘    └────────────┘    └───────────┘  │
-│                                                          │          │
-│                                          ┌───────────────┘          │
-│                                          ▼                          │
-│  ┌───────────┐    ┌───────────┐    ┌────────────┐                  │
-│  │ 7. Graph  │◀───│ 6. LLM    │◀───│ 5. Hybrid  │                  │
-│  │ Ingestion │    │ Summarize │    │ AST Parse  │                  │
-│  └───────────┘    └───────────┘    └────────────┘                  │
-│       │                                                             │
-│       ▼                                                             │
-│  ┌───────────┐                                                      │
-│  │ 8. Vector │                                                      │
-│  │ Embedding │                                                      │
-│  └───────────┘                                                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     INDEXING SWARM PIPELINE                             │
+│                                                                         │
+│  ┌──────────┐    ┌───────────┐    ┌────────────┐    ┌─────────────┐     │
+│  │ 1. Quick │───▶│ 2. Build  │───▶│ 3. LLM     │───▶│ 4. Hybrid   │     │
+│  │ Dir Scan │    │ Detector  │    │ Tier Class.│    │ Tier Merge  │     │
+│  └──────────┘    └───────────┘    └────────────┘    └─────────────┘     │
+│                                                          │              │
+│                                          ┌───────────────┘              │
+│                                          ▼                              │
+│  ┌───────────┐    ┌───────────┐    ┌─────────────┐    ┌──────────────┐  │
+│  │ 8. Graph  │◀───│ 7. Fleet  │◀───│ 6. LLM      │◀───│ 5. Intersect │  │
+│  │ Ingest    │    │ Telemetry │    │ Summarize   │    │ IPC + AST    │  │
+│  └───────────┘    └───────────┘    └─────────────┘    └──────────────┘  │
+│       │                                                                 │
+│       ▼                                                                 │
+│  ┌───────────┐    ┌───────────┐    ┌─────────────┐    ┌──────────────┐  │
+│  │ 9. Vector │───▶│ 10. Math  │───▶│ 11. Bundle  │───▶│ 12. P2P      │  │
+│  │ Embeds    │    │ Scorer    │    │ Manifests   │    │ Swarm Sync   │  │
+│  └───────────┘    └───────────┘    └─────────────┘    └──────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
-
-**Step-by-step:**
-
-1. **Quick Initial Directory Structure Study**:  
-   Before deep parsing, perform a fast scan of the directory tree. Build the `Directory` graph immediately. This gives the LLM an instant, high-level architectural view, helping it reason about code organization before any detailed parsing happens.
-
-2. **Project Auto-Detector**:  
-   Automatically detect the build system by probing for signature files:
-   - `meta-*/conf/layer.conf` → Yocto/Bitbake
-   - `.config` + `Config.in` → Buildroot
-   - `feeds.conf.default` → OpenWrt
-   - `Kconfig` + `Makefile` at root → Linux kernel
-   - `CMakeLists.txt` → CMake project
-   - `Makefile` only → Generic Make
-   
-   **If detection fails or is ambiguous, interactively prompt the user** with detected candidates and let them choose.
-
-3. **Build Config Analyzer** (The Killer Feature):
-   - **Yocto**: Parse selected recipes + `bblayers.conf` + `local.conf` → extract `DISTRO_FEATURES`, enabled packages, `PREFERRED_VERSION`, applied patches, `IMAGE_INSTALL` manifest.
-   - **Buildroot/OpenWrt**: Parse `.config` → extract `BR2_PACKAGE_*` selections, toolchain config, enabled kernel modules.
-   - **Kernel**: Parse `.config` + run `scripts/clang-tools/gen_compile_commands.py` (if kernel already built) or use `Bear` to intercept a build → generate `compile_commands.json`.
-   - **compile_commands.json handler**: For CMake projects, use `CMAKE_EXPORT_COMPILE_COMMANDS=ON` (Yocto's `cmake.bbclass` does this automatically). For Makefile projects, use `Bear` or `compiledb`. This gives libclang *exact* compiler flags per file.
-   - **Output**: Set of active source files, enabled `#ifdef` symbols, active Device Tree files (`.dts`), and the resolved `compile_commands.json`.
-
-4. **File Selector & Progressive Indexing**:
-   - Filter out untouched upstream code (`busybox/`, `coreutils/`, unconfigured `kernel/drivers/`) based on build config analysis results.
-   - Focus parsing on developer-modified code (custom drivers, serial/GPIO pins, vendor layers, custom subsystems).
-   - **Tiered indexing strategy**:
-     - **Tier 1 (Full)**: Custom/modified files → full AST + summaries + embeddings.
-     - **Tier 2 (Skeleton)**: Direct dependencies of Tier 1 → signatures + call edges only (no summaries).
-     - **Tier 3 (Stub)**: Everything else → file name + path + hash only. Promoted on demand.
-   - Allow user overrides via `[include]` and `[exclude]` sections in `.codecrawler.toml`.
-   - **Progressive DB Growth**: As the developer queries new files or asks about untouched code, use **Lazy Indexing** to dynamically upgrade Tier 3 → Tier 2 → Tier 1 in the background.
-
-5. **Hybrid AST Parser** (Tree-sitter + libclang):
-   - **Tree-sitter (fast pass)**: Rapidly extract structural AST—function signatures, struct definitions, `#include` directives, macro definitions. Fault-tolerant, works on incomplete/broken code. Runs on *all* selected files.
-   - **libclang (deep pass)**: For Tier 1 files with a valid `compile_commands.json`, run libclang to get:
-     - Fully resolved `#ifdef` paths (which code paths are actually compiled)
-     - Accurate cross-translation-unit call graphs
-     - Type-resolved symbol references
-     - Preprocessor macro expansion
-   - **Merge strategy**: Tree-sitter provides the structural skeleton. libclang overlays semantic precision. If libclang fails (missing headers, broken build), tree-sitter results are used as fallback.
-
-6. **Cheap LLM Summarizer**:
-   - Batch process function/struct summaries using a cost-effective model.
-   - **Structured prompt** per function:
-     ```
-     Function: {name}
-     Signature: {signature}
-     Calls: {callee_list}
-     Uses structs: {struct_list}
-     Build guards: {ifdef_list}
-     Source (lines {start}-{end}):
-     {code_snippet}
-     
-     Write a 2-3 sentence summary of what this function does.
-     Tag it with categories: [driver|init|config|network|storage|security|util|other]
-     ```
-   - Run asynchronously with rate limiting. Retry on failures.
-
-7. **Graph Ingestion**: Insert all nodes and edges into the DuckDB graph with proper spatial organization.
-
-8. **Vector Embedding**: Generate embeddings for function summaries and file-level summaries using `sentence-transformers/all-MiniLM-L6-v2` (384-dim, runs locally). Store in HNSW-indexed columns.
 
 ---
 
-## 5. Build-System Awareness & Embedded Superpowers
+## 10. MCP (Model Context Protocol) Integration
 
-This is the part no other tool has for Yocto/Buildroot/OpenWrt.
-
-### 5.1 compile_commands.json Generation Strategy
-
-| Build System | Method | Tool |
-|-------------|--------|------|
-| CMake | `CMAKE_EXPORT_COMPILE_COMMANDS=ON` | Native CMake |
-| Yocto + CMake | `cmake.bbclass` auto-sets it | Yocto SDK |
-| Yocto + Make | `devtool ide-sdk` + Bear | Bear 2.4.4 |
-| Linux Kernel | `scripts/clang-tools/gen_compile_commands.py` | Kernel scripts |
-| Buildroot | `BR2_PACKAGE_HOST_BEAR=y` or post-build Bear | Bear |
-| Generic Make | `bear -- make` | Bear / compiledb |
-
-### 5.2 `#ifdef` Resolution Pipeline
-
-```text
-.config file → Parse CONFIG_* symbols → Build symbol table
-    │
-    ▼
-For each C file: tree-sitter finds #ifdef/#if blocks
-    │
-    ▼
-Cross-reference with symbol table → Mark active/inactive branches
-    │
-    ▼
-Create guarded_by edges: Function → BuildConfig
-    │
-    ▼
-libclang confirms (if compile_commands.json available)
-```
-
-### 5.3 Device Tree Awareness
-
-Embedded Linux heavily relies on Device Trees. Code Crawler will:
-- Parse `.dts` and `.dtsi` files → extract nodes, `compatible` strings, properties
-- Match `compatible` strings to kernel driver `of_match_table` entries
-- Create `dt_binds_driver` edges linking DT nodes to their driver `probe()` functions
-- Enable queries like: *"What driver handles the UART at address 0x12340000?"*
-
-### 5.4 MCP Tools for Build Context
-
-- `analyze_build_context(query)`: Returns a plain-English summary of enabled features, custom layers, patches, and `#ifdef` chains active in the current image.
-- `lazy_index_directory(path)`: Force the system to index a previously excluded directory on-demand, upgrading it from Tier 3 to Tier 1.
-- `resolve_ifdef_chain(symbol)`: Trace a `CONFIG_*` symbol from Kconfig definition → `.config` value → guarded code paths.
-- `trace_dt_to_driver(dt_path)`: Given a Device Tree node path, return the full chain: DT node → compatible string → driver module → probe function → initialization sequence.
-
----
-
-## 6. MCP Integration (Official SDK) – Agent-Centric Design
-
-Use the `mcp` Python SDK. Following MCP best practices, tools are designed around **complete workflows** (not raw API endpoints) to minimize the LLM's cognitive load and token usage.
-
-### 6.1 Design Principles
-
-- **Workflow-oriented tools**: Each tool handles a complete user goal internally, reducing multi-step orchestration by the LLM.
-- **Managed tool budget**: Keep tool count under ~15 to avoid agent confusion and token waste.
-- **Rich documentation**: Every tool includes purpose, parameter schemas, usage examples, and error semantics so the LLM knows exactly when and how to use it.
-- **Structured output**: Return JSON with consistent schemas so the LLM can parse results reliably.
-
-### 6.2 Tool Definitions
-
+### 10.1 Key MCP Tools
 | Tool | Description | Returns |
 |------|-------------|---------|
-| `search_code(query, scope?)` | Hybrid vector + graph + FTS search. Scope can be customized. | Ranked results with file paths, line numbers, summaries, and relevance scores |
-| `get_folder_structure(path?, depth?)` | Returns the spatial folder graph | Tree with metadata (file count, custom flag, summary) |
-| `get_call_hierarchy(func, direction, depth?)` | Graph traversal for callers/callees | Call tree with signatures, files, and summaries |
-| `get_build_context(query)` | Resolves active `#ifdef` configs for a query | Active configs, their sources, and affected code paths |
-| `get_code_snippet(file, start, end)` | Retrieve raw source code | Source text with line numbers |
-| `trace_data_flow(symbol, scope?)` | Track a variable/struct through call chains | Ordered list of functions that read/write the symbol |
-| `get_dt_binding(compatible_or_path)` | Device Tree → driver resolution | DT node, compatible string, driver file, probe function |
-| `analyze_impact(file_or_func)` | What depends on this? What breaks if it changes? | Dependency tree: callers, includers, DT bindings |
-| `lazy_index(path)` | On-demand indexing of previously excluded code | Status + summary of newly indexed entities |
-| `get_index_status()` | Index health, coverage stats, stale files | Dashboard data |
+| `search_code(query)` | Vector + FTS unified search | Ranked `IndexManifest` bundles |
+| `get_call_hierarchy` | Graph traversal | Tree with signatures + summaries |
+| `get_build_context` | `#ifdef` config lookup | Active paths affecting the query |
+| `trace_ipc_flow` | Spans DBus/Ubus architectures | Ordered cross-process dependencies |
+| `correlate_serial_log`| Log extraction jump | AST paths emitting exact strings |
+| `analyze_impact` | Dependency blast radius | Downstream hardware/software impacts |
+| `sync_team()` | Distributed swarm poll | Applies remote team summaries/patches |
 
-### 6.3 MCP Resources
-
-Expose key data as MCP resources for context injection:
-- `codecrawler://project/summary` – High-level project description + build system info
-- `codecrawler://tree/{path}` – Directory tree at a given path
-- `codecrawler://config/active` – Currently active build configuration summary
+### 10.2 Pre-Materialised MCP Resources
+| Resource URI | Description |
+|-------------|-------------|
+| `codecrawler://manifest/{path}` | Complete per-file context bundle (~500 tokens) |
+| `codecrawler://llm_view/{layer}`| Pre-built high-priority SQL views for immediate context |
+| `codecrawler://telemetry/{node}`| Recent crashes / warnings for this specific subsystem |
 
 ---
 
-## 7. UI for Developers (Human-Readable Interactive View)
+## 11. UI — Code Nebula
 
-**FastAPI + HTMX + Vis.js (or D3.js)** powered dashboard designed for code comprehension.
+The **FastAPI + Three.js** interactive 3D graph (operable in browser) functions as the "Google Earth" of the codebase.
 
-### 7.1 Core UI Features
-
-- **Source-Tree Graph Explorer**: A visual directory tree that mirrors the physical folder structure, but overlays interconnected graph edges (function calls, includes, DT bindings) across files. Click any node to drill into its details.
-
-- **Tinker Focus Mode**: A toggle that visually dims upstream/untouched code (like `coreutils`) and highlights custom layers, modified files, and active `.dts` files. This is the "show me only what I care about" button.
-
-- **AI Chat + Code-Map Integration**: When a developer asks *"How is UART2 initialized?"*, the UI not only answers but physically highlights the path in the graph explorer, spanning from the Device Tree file → compatible match → driver probe function → register initialization.
-
-- **Build Config Dashboard**: A navigable Kconfig/Bitbake tree showing which flags are enabled, which files they activate, and the `#ifdef` chains they control. Toggle a config and see which code paths light up.
-
-- **"What changed since last index?"**: An incremental diff view showing new nodes, new edges, deleted entities, and changed summaries since the last indexing run.
-
-### 7.2 New UI Ideas
-
-- **Dependency Blast Radius**: Select a file or function and visualize everything that depends on it. Useful before refactoring: *"If I change this struct, what breaks?"*
-
-- **Cross-Layer View** (Yocto-specific): Visualize which Yocto layers contribute to the final image. Overlay patches, `bbappend` files, and recipe overrides in a stacked view.
-
-- **Code Heatmap**: Color files by modification frequency (from git history), complexity, or LLM-determined "risk score". Identify hotspots at a glance.
-
-- **Interactive Query Builder**: A visual Cypher/SQL query builder that generates graph queries without writing raw syntax.
+- **Nebula Spatial Views**: Visualizes files organically. Nodes sized by priority, colored by Tier.
+- **Telemetry Heatmaps**: Dims everything except functions physically touched by active GDB/Valgrind traces.
+- **Tinker Focus**: Darkens untouched Linux/Busybox layers to highlight strictly the vendor apps and IPC bridges.
+- **Nebula Tour**: Generates an automated LLM fly-through describing exactly how a subsystem boots and operates structurally.
 
 ---
 
-## 8. LLM Write-Back & Knowledge Enrichment
-
-> [!IMPORTANT]
-> This is a bidirectional system: LLMs don't just *read* from the graph—they can *write back* to enrich it.
-
-### 8.1 Write-Back Mechanism
-
-When an LLM (via MCP or the UI chat) discovers insights during a conversation, it can propose annotations:
-
-```python
-# MCP tool for LLM write-back
-annotate_entity(entity_type, entity_id, annotation_type, content)
-# Example: annotate_entity("Function", 42, "insight", 
-#   "This function is the main entry point for WiFi credential provisioning. 
-#    It's called during first-boot only when CONFIG_WIFI_ONBOARDING is set.")
-```
-
-### 8.2 Annotation Types
-- **`insight`**: High-level understanding the LLM derived from multi-hop reasoning
-- **`warning`**: Potential bugs, race conditions, or security concerns the LLM identified
-- **`relationship`**: New edges the LLM discovered (e.g., an indirect functional dependency)
-- **`tag`**: Categorical tags (e.g., "security-critical", "init-sequence", "hardware-specific")
-
-### 8.3 Rules for Write-Back
-- All LLM annotations are stored separately from deterministic AST data (in an `Annotation` table)
-- Annotations include the LLM model name, timestamp, and confidence score
-- Human developers can review, approve, or reject annotations via the UI
-- Approved annotations are promoted to first-class graph properties
-
----
-
-## 9. Incremental Indexing & Real-Time Watch
-
-### 9.1 File Change Detection
-
-```text
-watchdog (OS file events)
-    │
-    ├── File modified → Compare content hash
-    │   ├── Hash unchanged → Skip
-    │   └── Hash changed → Re-parse affected file
-    │       ├── Update AST nodes (functions, structs, macros)
-    │       ├── Re-compute edges (calls, includes)
-    │       ├── Invalidate & regenerate summaries
-    │       └── Update embeddings
-    │
-    ├── File created → Index new file (respect tier rules)
-    └── File deleted → Remove nodes + cascade-delete edges
-```
-
-### 9.2 Git-Aware Incremental Updates
-- On `git pull` or branch switch, diff the file list and re-index only changed files
-- Track `git blame` to identify which files are actively developed vs. old/stable
-- Use git history to compute the **Code Heatmap** feature
-
----
-
-## 10. Configuration (`.codecrawler.toml`)
+## 12. Configuration (.codecrawler.toml)
 
 ```toml
 [project]
 name = "my-rdk-build"
-type = "yocto"                    # auto-detected, or user-specified
+type = "yocto"                    
 root = "/home/dev/yocto-build"
-build_dir = "/home/dev/yocto-build/build"
 
 [index]
-tiers = { full = ["meta-custom/**", "meta-vendor/**"], 
-          skeleton = ["poky/meta/**"],
-          stub = ["**"] }           # everything else
-exclude = ["build/tmp/**", "downloads/**", ".git/**"]
+tiers = { full = ["meta-custom/**", "meta-vendor/**"], skeleton = ["poky/meta/**"], stub = ["**"] }
 
 [build]
-config_file = "build/conf/local.conf"      # Yocto
-layers_file = "build/conf/bblayers.conf"   # Yocto
-kernel_config = "build/tmp/work/**/linux-*/build/.config"  # glob pattern
-compile_commands = "auto"                  # auto-generate, or path to existing
+config_file = "build/conf/local.conf"
+layers_file = "build/conf/bblayers.conf"
+kernel_config = "build/tmp/work/**/linux-*/build/.config"
+compile_commands = "auto"
 
 [llm]
-provider = "ollama"               # ollama | openai | anthropic
-model = "llama3.2:8b"            # or "gpt-4o-mini" for OpenAI
-batch_size = 50
-max_concurrent = 4
-retry_count = 3
+provider = "ollama"
+model = "llama3.2:8b"
 
 [embeddings]
 model = "sentence-transformers/all-MiniLM-L6-v2"
-device = "cpu"                    # cpu | cuda
+device = "cpu"
 
-[mcp]
-host = "127.0.0.1"
-port = 8765
-transport = "stdio"               # stdio | sse
+[tiering]
+llm_proposer_model = "llama3.2:3b"
+git_evidence_months = 6         
 
-[ui]
-host = "0.0.0.0"
-port = 8080
+[priority_scoring]
+weights = { tier = 0.25, usage = 0.20, centrality = 0.15, build = 0.10, runtime = 0.15, recency = 0.15 }
+self_tuning = true
 
-[watch]
-enabled = false
-debounce_ms = 500
+[collaboration]
+enabled = true
+master_db_path = "shared/codecrawler_master.db"
+swarm_compute = true 
+developer_id = "dev-a"
+
+[git]
+semantic_patch_enabled = true
+branch_isolation = true
+
+[telemetry]
+enabled = true
+sources = ["gdb_traces", "valgrind", "asan_logs", "serial_uart_logs"]
+auto_patch_generation = true
 ```
 
 ---
 
-## 11. Tech Stack (Technically Sound & Lightweight)
+## 13. Error Handling, Security & Resilience
+
+- **Secure Execution**: MCP tools execute locally and return data strictly; no arbitrary LLM execution commands exist in the core DB.
+- **Branch Bleed Prevention**: Git-aware sub-graphs completely eliminate unfinished code infecting the master analytics engine.
+- **Database Degradation**: If Swarm Sync drops, DuckDB caches DeltaSyncLogs locally and applies when connectivity restores.
+- **Parsing Fallbacks**: If `libclang` fails due to broken `compile_commands.json`, Tree-Sitter seamlessly abstracts the structural components without interrupting the UI flow.
+
+---
+
+## 14. Technology Stack
 
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
-| **Language** | Python 3.12+ | Core + MCP + UI, rich ecosystem |
-| **Fast parsing** | `tree-sitter` + Python bindings | Incremental, fault-tolerant, all languages |
-| **Deep parsing** | `libclang` (Python `clang` package) | Precise `#ifdef` resolution, type info, cross-TU |
-| **DB** | DuckDB + DuckPGQ + vss | Embedded, graph + vector + FTS in one file |
-| **Embeddings** | `sentence-transformers/all-MiniLM-L6-v2` | 384-dim, fast, runs locally on CPU |
-| **Code embeddings** | Microsoft UniXcoder (optional) | Code-aware embeddings, better for code search |
-| **LLM summarizer** | Ollama (Llama 3.2 / Deepseek) | Local, free, configurable |
-| **LLM fallback** | GPT-4o-mini / Claude Haiku | Cloud API for higher quality summaries |
-| **Web UI** | FastAPI + HTMX + Vis.js or D3.js | Lightweight, no heavy JS framework needed |
-| **File watching** | `watchdog` | Cross-platform file system events |
-| **Build interception** | Bear 2.4.4 / compiledb | Generate compile_commands.json from Make |
-| **DT parsing** | `dtc` (Device Tree Compiler) Python bindings | Parse .dts/.dtsi files |
-| **Packaging** | `uv` + PyInstaller | Fast dependency management + single binary |
-| **Testing** | `pytest` + `pytest-asyncio` | Async-friendly testing |
+| **Core & Engine** | Python 3.12+ | Rich AST and AI ecosystem bindings. |
+| **Parsing Pipeline**| `tree-sitter` + libclang | Fast fault-tolerant structures + deep C semantic layers. |
+| **Database** | DuckDB + DuckPGQ + vss | Zero-admin, unified graph+relational+vector store. |
+| **AI Intelligence** | Ollama (Llama 3 8B, Qwen) | Local, free, massive pre-trained open source code knowledge. |
+| **Embeddings** | `sentence-transformers` | Sub-second local semantic generation. |
+| **Graph Centrality** | `networkx` | Betweenness-centrality for prioritizing bottlenecks. |
+| **UI** | FastAPI + Three.js | Lightweight spatial mapping without massive React payloads. |
 
 ---
 
-## 12. Error Handling & Resilience
+## 15. Execution Phases
 
-### 12.1 Graceful Degradation
+### Phase 0 – Storage & Structural Foundation
+- [ ] Project skeleton with DuckDB + PGQ schema definitions.
+- [ ] Universal parser integration (C/C++ Tree-sitter + variable/struct scraping).
 
-Code Crawler should work even when parts of the pipeline fail:
+### Phase 1 – Build Intelligence & Boundaries
+- [ ] Build detector (Yocto, Buildroot, Kernel config parsing).
+- [ ] Device Tree hardware matching.
+- [ ] IPC Boundary detection (D-Bus, AIDL bridging schema mappings).
 
-| Failure | Degraded Behavior |
-|---------|-------------------|
-| No `compile_commands.json` | Skip libclang pass; tree-sitter only (less precise `#ifdef` resolution) |
-| LLM unavailable | Index without summaries; summaries generated later when LLM comes online |
-| Embedding model fails to load | Skip vector indexing; graph + FTS search still works |
-| Build config not found | Index all files without tier filtering; warn user |
-| Partial parse failure | Log error, skip file, continue indexing; report failed files in status |
+### Phase 2 – LLM Tiering & Mathematics
+- [ ] Sub-7B tier proposer deployment (i0-i3 classifications).
+- [ ] Priority Scoring engine (6-dimension scoring with Recency calculation).
+- [ ] Log telemetry hasher/correlator (Macro `printk` extractor).
 
-### 12.2 Logging & Observability
-- Structured JSON logging with severity levels
-- Index run reports: files processed, errors, duration, coverage percentage
-- MCP request logging with timing for performance debugging
+### Phase 3 – MCP & Swarm Synchronization
+- [ ] Swarm P2P orchestration pipeline.
+- [ ] Git-aware Sub-graphs layout.
+- [ ] MCP tool implementations and `IndexManifest` builder routes.
 
----
-
-## 13. Security Considerations
-
-Since Code Crawler acts as an MCP server that LLMs interact with:
-
-- **Input validation**: Sanitize all file paths and queries to prevent path traversal
-- **No arbitrary code execution**: MCP tools return data only, never execute user-supplied code
-- **Scoped access**: The MCP server only accesses files within the configured project root
-- **Annotation review**: LLM write-backs require human approval before modifying core graph data
-- **Transport security**: Support stdio (local) and SSE with optional TLS for remote access
+### Phase 4 – Proactive Intelligence & Polish
+- [ ] Background remediation agent (write-contention patch generator).
+- [ ] Three.js "Code Nebula" web UI + Nebula Flythrough Tours.
+- [ ] Performance and Success metric verification.
 
 ---
 
-## 14. Phases (Updated & Realistic)
+## 16. Success Metrics
 
-### Phase 0 – Foundation (1–2 weeks)
-- [ ] Project skeleton with `uv` + proper package structure
-- [ ] DuckDB schema with DuckPGQ property graph + vss vector index
-- [ ] C/C++ tree-sitter parser MVP: extract functions, structs, includes
-- [ ] Directory tree scanner → build spatial graph
-- [ ] Basic `.codecrawler.toml` config loading
-- [ ] **Milestone**: Can index a small C project and query the graph via Python
-
-### Phase 1 – Build System Intelligence (2–3 weeks)
-- [ ] Build system auto-detector (Yocto/Buildroot/Kernel/CMake/Make)
-- [ ] Interactive fallback prompts when detection fails
-- [ ] Yocto recipe parser (`bblayers.conf`, `local.conf`, recipe metadata)
-- [ ] Kernel `.config` parser + `compile_commands.json` generation
-- [ ] Buildroot `.config` parser
-- [ ] Tiered file selector (Full / Skeleton / Stub)
-- [ ] **Milestone**: Can detect a Yocto build and selectively index custom layers only
-
-### Phase 2 – Deep Analysis (2 weeks)
-- [ ] libclang integration: `#ifdef` resolution using `compile_commands.json`
-- [ ] Cross-TU call graph resolution via libclang
-- [ ] Device Tree parser: `.dts`/`.dtsi` → DeviceTreeNode + driver binding edges
-- [ ] `guarded_by` edge creation (`#ifdef CONFIG_*` → BuildConfig)
-- [ ] **Milestone**: Can resolve which code paths are active for a given kernel config
-
-### Phase 3 – AI Layer (1–2 weeks)
-- [ ] Cheap LLM summarizer with structured prompts + async batching
-- [ ] Embedding generation (MiniLM or UniXcoder)
-- [ ] Vector index creation + hybrid search (graph + vector + FTS)
-- [ ] **Milestone**: Can answer semantic queries like "how is WiFi initialized?"
-
-### Phase 4 – MCP Server (1 week)
-- [ ] MCP server with all tool definitions (using official `mcp` SDK)
-- [ ] MCP resource definitions
-- [ ] Workflow-oriented tool design with rich documentation
-- [ ] Test with Claude Desktop / Cursor / VS Code
-- [ ] **Milestone**: LLM can query the codebase through MCP tools
-
-### Phase 5 – Real-Time & UI (2–3 weeks)
-- [ ] `watchdog`-based incremental watcher
-- [ ] Git-aware diffing for re-indexing
-- [ ] FastAPI web dashboard: tree explorer, graph visualization
-- [ ] Tinker Focus Mode
-- [ ] Build Config Dashboard
-- [ ] AI chat integration with graph highlighting
-- [ ] **Milestone**: Developer can visually explore and query their codebase
-
-### Phase 6 – Enrichment & Polish (1–2 weeks)
-- [ ] LLM write-back / annotation system
-- [ ] Lazy indexing (Tier 3 → Tier 1 on demand)
-- [ ] Dependency blast radius visualization
-- [ ] Code heatmap from git history
-- [ ] Export graph as JSON/DOT
-- [ ] **Milestone**: Complete bidirectional system with visual insights
-
-### Phase 7 – Extensibility (ongoing)
-- [ ] Python crawler + Shell script parsing
-- [ ] Plugin system for new languages
-- [ ] Rust-based performance-critical extensions (optional)
-- [ ] Community plugin marketplace
-
----
-
-## 15. Success Metrics
-
-| Metric | Target |
-|--------|--------|
-| Indexing speed (Tier 1) | > 1,000 files/minute on commodity hardware |
-| Query latency (MCP) | < 500ms for graph queries, < 1s for hybrid search |
-| Token savings | > 80% reduction vs. raw file scanning for typical queries |
-| `#ifdef` accuracy | > 95% when `compile_commands.json` is available |
-| First useful query | < 5 minutes from `codecrawler index` on a medium project |
-| Incremental re-index | < 10 seconds for single-file changes |
+| Metric | Target Goal |
+|--------|-------------|
+| **Indexing Speed** | > 1,000 files/min (Multiplied dynamically per Swarm peer joining) |
+| **Query Latency (MCP)** | < 200ms per retrieval |
+| **Context Compression** | ~30:1 token reduction via pre-packaged `IndexManifests` |
+| **First Useful AI Query**| < 90 seconds (Leveraging LLM tier-skips over indexing delays) |
+| **Team Sync Latency** | < 2 seconds delta replication |
+| **Agent Retrieve Burden**| Capped strictly at 1 MCP call or 1 pre-calculated View |
