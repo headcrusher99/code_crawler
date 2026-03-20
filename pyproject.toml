@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codecrawler"
+version = "4.0.0"
+description = "LLM-first semantic code indexer for massive embedded projects"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [
+    { name = "Code Crawler Team" },
+]
+keywords = ["code-indexing", "llm", "semantic-search", "embedded-linux", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+
+dependencies = [
+    "click>=8.1",
+    "duckdb>=1.0",
+    "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+llm = ["ollama>=0.3"]
+embeddings = ["sentence-transformers>=3.0"]
+parsing = ["tree-sitter>=0.23", "tree-sitter-c>=0.23", "tree-sitter-python>=0.23"]
+ui = ["fastapi>=0.115", "uvicorn>=0.32"]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8.0", "ruff>=0.8"]
+all = ["codecrawler[llm,embeddings,parsing,ui,mcp,dev]"]
+
+[project.scripts]
+codecrawler = "codecrawler.cli:main"
+
+[project.entry-points."codecrawler.plugins"]
+c_crawler = "codecrawler.crawlers.c_crawler:CCrawlerPlugin"
+python_crawler = "codecrawler.crawlers.python_crawler:PythonCrawlerPlugin"
+shell_crawler = "codecrawler.crawlers.shell_crawler:ShellCrawlerPlugin"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

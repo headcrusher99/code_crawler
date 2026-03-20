@@ -1,4 +1,4 @@
-# Code Crawler: System Architecture & Design Specification
+# 🕷️ Code Crawler: System Architecture & Design Specification
 
 **Goal**: A definitive, LLM-first, team-live-syncing, pre-trained-knowledge-aware semantic indexer for massive embedded projects (RDK-B, prplOS, OpenWrt, Buildroot, Android AOSP, Yocto, Linux kernel). Code Crawler minimizes context-window taxation and acts as an intelligence layer with zero retrieval overhead for AI agents.
 
