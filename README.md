@@ -1,6 +1,6 @@
 <div align="center">
   <img src="./DOCS/logo.png" width="350" alt="Code Crawler Logo">
-  <h1>Code Crawler</h1>
+  <h1><img src="./DOCS/logo_emoji.png" width="32" height="32" align="absmiddle"> Code Crawler</h1>
   <p><strong>A Semantic AI Code Indexer and Model Context Protocol (MCP) Server</strong></p>
 </div>
 
