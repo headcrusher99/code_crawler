@@ -1,5 +1,6 @@
 <div align="center">
-  <h1>🕷️ Code Crawler</h1>
+  <img src="./DOCS/logo.svg" width="350" alt="Code Crawler Animated Logo">
+  <h1>Code Crawler</h1>
   <p><strong>A Semantic AI Code Indexer and Model Context Protocol (MCP) Server</strong></p>
 </div>
 

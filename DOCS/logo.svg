@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <defs>
+    <!-- Intense Neon Red Glow Filter -->
+    <filter id="neon" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur1" />
+      <feGaussianBlur stdDeviation="10" result="blur2" />
+      <feMerge>
+        <feMergeNode in="blur2" />
+        <feMergeNode in="blur1" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <style>
+    .bg { fill: #000000; }
+    .web { 
+      stroke: #2a0505; 
+      stroke-width: 2; 
+      fill: none; 
+    }
+    .spider { 
+      stroke: #ff1111; 
+      fill: #0a0000; 
+      stroke-width: 6; 
+      stroke-linejoin: round; 
+      stroke-linecap: round; 
+      filter: url(#neon); 
+    }
+    .code { 
+      fill: #ff1111; 
+      font-family: 'Courier New', monospace; 
+      font-size: 38px; 
+      font-weight: 900; 
+      text-anchor: middle; 
+      dominant-baseline: central; 
+      filter: url(#neon); 
+    }
+    
+    @keyframes pulse {
+      0%, 100% { filter: drop-shadow(0 0 10px rgba(255, 0, 0, 0.5)); }
+      50% { filter: drop-shadow(0 0 25px rgba(255, 30, 30, 0.9)); }
+    }
+    .glow { animation: pulse 2.5s infinite alternate; }
+    
+    @keyframes breathe {
+      0%, 100% { transform: scale(1) translateY(0); }
+      50% { transform: scale(1.015) translateY(-2px); }
+    }
+    .anim-body { animation: breathe 3s ease-in-out infinite; transform-origin: 200px 200px; }
+  </style>
+
+  <!-- Solid Black Background -->
+  <rect width="100%" height="100%" class="bg" />
+  
+  <!-- Faded Cyber Web Background -->
+  <g class="web">
+    <circle cx="200" cy="200" r="160" />
+    <circle cx="200" cy="200" r="110" />
+    <circle cx="200" cy="200" r="60" />
+    <line x1="200" y1="20" x2="200" y2="380" />
+    <line x1="20" y1="200" x2="380" y2="200" />
+    <line x1="73" y1="73" x2="327" y2="327" />
+    <line x1="73" y1="327" x2="327" y2="73" />
+  </g>
+  
+  <g class="glow anim-body">
+    <!-- Cybernetic Legs -->
+    <g class="spider" fill="none" stroke-width="7">
+      <!-- Top pair -->
+      <path d="M 185 130 L 140 70 L 60 110 L 80 180" />
+      <path d="M 215 130 L 260 70 L 340 110 L 320 180" />
+      <!-- Mid-top pair -->
+      <path d="M 180 150 L 110 130 L 40 190 L 70 260" />
+      <path d="M 220 150 L 290 130 L 360 190 L 330 260" />
+      <!-- Mid-bottom pair -->
+      <path d="M 180 170 L 120 210 L 60 280 L 110 350" />
+      <path d="M 220 170 L 280 210 L 340 280 L 290 350" />
+      <!-- Bottom pair -->
+      <path d="M 190 185 L 160 260 L 150 340" />
+      <path d="M 210 185 L 240 260 L 250 340" />
+    </g>
+
+    <!-- Structural Body -->
+    <g class="spider">
+      <!-- Cephalothorax (Head) -->
+      <polygon points="200,105 225,120 225,150 200,165 175,150 175,120" />
+      <!-- Pincers -->
+      <path d="M 185 105 L 180 85 L 195 98" fill="none" stroke-width="4" />
+      <path d="M 215 105 L 220 85 L 205 98" fill="none" stroke-width="4" />
+      <!-- Abdomen (Hexagonal) -->
+      <polygon points="200,160 255,190 255,260 200,290 145,260 145,190" />
+      <!-- Glowing Inner Border -->
+      <polygon points="200,173 242,196 242,252 200,275 158,252 158,196" fill="none" stroke-width="3" opacity="0.6"/>
+    </g>
+    
+    <!-- Code emblem -->
+    <text x="200" y="228" class="code">&lt;/&gt;</text>
+  </g>
+</svg>
