@@ -1,55 +1,43 @@
-# Code Crawler (Semantic Code Indexer)
+<div align="center">
+  <h1>🕷️ Code Crawler</h1>
+  <p><strong>A Semantic AI Code Indexer and Model Context Protocol (MCP) Server</strong></p>
+</div>
 
-**Code Crawler** is a persistent, AI-driven codebase indexer and Model Context Protocol (MCP) server aimed at large, macro-heavy embedded C/C++ projects (e.g., Yocto, OpenWrt, Linux kernel, RDK-B).
+---
 
-## The Problem
+**Code Crawler** is a persistent, AI-driven codebase indexer designed specifically for massive, macro-heavy embedded C/C++ projects (e.g., Yocto, OpenWrt, Linux kernel, RDK-B). 
+
+## 💡 The Problem
 Modern Large Language Models (LLMs) cannot fit massive codebases (millions of lines) into their context windows. Simple text search often fails to capture semantic relationships, nested call graphs, and build-system nuances (like complex `#ifdef` chains).
 
-## The Solution
-Instead of feeding raw code files to high-tier LLMs directly, Code Crawler preprocesses the codebase, creates an intelligent database graph, and acts as a Model Context Protocol (MCP) service. The LLM simply asks Code Crawler a question ("How does the Mac address get initialized?"), and Code Crawler responds with precise summaries and code pointers.
+## 🚀 The Solution
+Code Crawler prevents the need to feed raw code files to LLMs directly. Instead, it:
+1. **Preprocesses** the codebase offline.
+2. **Creates** an intelligent database graph.
+3. **Acts as an MCP service.** 
+The LLM simply asks Code Crawler a question, and Code Crawler responds with precise summaries and exact code pointers.
 
 ---
 
-## 🏗️ Architecture Requirements
+## 📂 Repository Structure
 
-1. **Pre-Indexing Engine (The Crawler)**
-   An offline pipeline that scans the codebase, reads compile commands, and builds an Abstract Syntax Tree (AST) using tools like `tree-sitter` or `libclang`. It extracts structural data: functions, structs, global variables, and call graphs.
+All primary design specifications and project roadmaps have been organized into the [`DOCS/`](./DOCS) directory:
 
-2. **Summary Generation (Cost-Effective LLM Pass)**
-   A local or cheap API-driven LLM (e.g., Llama 3, GPT-4o-mini) ingests the raw structural AST data. It function-by-function writes a plain-English, AI-friendly summary of what each component does.
-
-3. **Storage & Database Backend**
-   - **Graph Database** (Node/Edge relations like Neo4j or NetworkX) for relational queries (e.g., *Who calls this function?*).
-   - **Vector Database / SQLite** for semantic search (e.g., *Where is the driver initialized?*).
-
-4. **Modular Language Support**
-   Initial focus strictly on C/C++ to target 90% of embedded/router/kernel platforms, but keeping a pluggable architecture for eventual Python/Rust support.
-
-5. **API/Integration Layer (MCP)**
-   Expose the indexed data through the standard Model Context Protocol (MCP) so IDEs (VS Code, Cursor) and Agents (Claude Desktop) can natively search the indexed database.
+| Document | Description |
+|----------|-------------|
+| 📜 [**Design Idea**](./DOCS/design_idea.md) | Detailed technical architecture and proposed improvements (e.g., Swarm Indexing, IPC Edges, Proactive AI). |
+| 🗺️ [**Version Roadmap**](./DOCS/version_roadmap.md) | The phased rollout plan outlining MVP through advanced AI integration. |
+| 🛠️ [**Git Commands Guide**](./DOCS/git_commands_guide.md) | A handy cheat-sheet for syncing, pushing, and pulling the codebase. *(Ignored by Git)* |
 
 ---
 
-## 🚀 Phases of Implementation
+## 🏗️ Core Architecture Components
 
-### Phase 1: Minimum Viable Product (MVP) - C/C++ Extractor
-- Set up the Python project structure.
-- Write a basic parser using `tree-sitter-c` or `libclang`.
-- Given a sample Linux C file, extract function signatures, starting lines, and ending lines into a local JSON or SQLite database.
+1. **Pre-Indexing Engine (The Crawler)**: Scans offline, reads compile commands, and builds an Abstract Syntax Tree (AST) using tools like `tree-sitter` or `libclang`.
+2. **Summary Generation**: Passes the AST through a cost-effective LLM iteratively to generate plain-English documentation.
+3. **Storage & Database Backend**: Uses Graph/Vector databases alongside SQLite to map relations and process semantic search queries.
+4. **API/Integration Layer (MCP)**: Exposes the data natively so IDEs (Cursor, VS Code) and Agent desktops can search the indexed database securely.
 
-### Phase 2: Cheap LLM Summarizer
-- Setup API calls to a cost-effective model.
-- Pass the extracted AST data function-by-function to generate AI-readable documentation strings for the database.
-
-### Phase 3: Fast Graph Query System
-- Organize functions into a lightweight graph to map control/data flow (caller/callee).
-
-### Phase 4: MCP Server Integration
-- Build a Python MCP Server using the official `mcp` SDK.
-- Create tools like `get_component_summary(name)`, `get_call_hierarchy(func)`, and `search_functions_semantically(query)`.
-
----
-
-## Development Environment
-- Primary Langs: Python (for tooling & MCP), C/C++ (target)
-- Core Libraries: `tree-sitter`, `sqlite3`, `mcp` SDK.
+## 🛠️ Development Environment
+- **Primary Languages:** Python (`mcp`, tooling) & target C/C++
+- **Core Libraries:** `tree-sitter`, `sqlite3`
