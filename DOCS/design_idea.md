@@ -482,3 +482,127 @@ auto_patch_generation = true
 | **First Useful AI Query**| < 90 seconds (Leveraging LLM tier-skips over indexing delays) |
 | **Team Sync Latency** | < 2 seconds delta replication |
 | **Agent Retrieve Burden**| Capped strictly at 1 MCP call or 1 pre-calculated View |
+
+---
+
+## 17. Beyond Developers — Extended Stakeholder Use Cases
+
+Code Crawler's structured knowledge graph is not limited to software engineers. The rich, queryable, semantically annotated data serves every role that interacts with a codebase.
+
+### 17.1 Stakeholder Map
+
+| Stakeholder | How They Use Code Crawler | Key Data They Consume |
+|-------------|--------------------------|----------------------|
+| **QA / Test Engineers** | Query the graph for "all functions that mutate this global variable" to generate targeted test plans. `RuntimeTrace` + sanitizer data highlights what code is actually exercised vs untested dead paths. | `Variable.write_count`, `RuntimeTrace`, `calls` graph |
+| **Security Auditors** | Trace all reachable paths from a network-facing function to dangerous sinks (`system()`, `popen()`, unprotected global writes). IPC edges reveal cross-process attack surfaces invisible in flat source. | `calls` + `calls_over_ipc` graph traversal, `Variable.is_global` |
+| **Technical Writers** | Auto-generate API documentation, system architecture diagrams, and subsystem overviews using LLM summaries + call hierarchies — without reading a single line of C. | `Function.summary`, `IndexManifest`, call hierarchy views |
+| **Project Managers** | Use tier classifications + priority scores to understand which parts of a 5M-line codebase are "active development" vs "never-touched upstream" — enabling accurate effort estimation and risk assessment. | `Tier` table, `PriorityScore.composite_score`, `Recency` |
+| **Hardware Engineers** | Device Tree → driver binding edges (`dt_binds_driver`) let HW engineers trace which software touches their peripherals, which `probe()` functions initialise their IP blocks — without learning C. | `DeviceTreeNode`, `dt_binds_driver`, driver `Function` nodes |
+| **Compliance / Legal** | Trace which open-source packages (i0/i1 tier directories) are linked into the final image. Map license obligations across the build graph by correlating Yocto layer metadata with actual binary inclusion. | `Tier`, `BuildConfig`, `Directory` hierarchy, Yocto layer data |
+| **New Team Members** | The "Nebula Tour" fly-through + tiered summaries let newcomers understand a massive codebase conceptually in hours instead of months. Priority scoring directs attention to what matters first. | Code Nebula UI, `LLM_HighPriority` view, `Function.summary` |
+
+### 17.2 Non-Developer Query Examples
+
+```text
+Security Auditor:
+  "Show me every path from a ubus/D-Bus handler to a system() or popen() call"
+  → MCP: get_call_hierarchy(root="ubus_handler_*", sink_filter="system|popen", include_ipc=true)
+
+QA Engineer:
+  "Which functions have write_count > 3 on global variables but zero RuntimeTrace hits?"
+  → SQL: SELECT * FROM LLM_SharedState WHERE write_count > 3
+         AND func_id NOT IN (SELECT func_id FROM RuntimeTrace);
+
+Hardware Engineer:
+  "What software touches the I2C controller on the BCM63178?"
+  → MCP: trace_dt_binding(compatible="brcm,bcm63178-i2c")
+
+Project Manager:
+  "What percentage of our custom layer has AI summaries with confidence > 0.8?"
+  → SQL: SELECT COUNT(*) FILTER (sm.confidence > 0.8) * 100.0 / COUNT(*)
+         FROM Function f JOIN SummaryMeta sm ON f.id = sm.entity_id
+         JOIN Tier t ON ... WHERE t.tier = 3;
+```
+
+---
+
+## 18. AI Model Training Factory
+
+Code Crawler's richest strategic value may not be as a developer tool — but as a **structured training data pipeline for AI models**. Public AI training corpora consist of raw, flat, context-free source code scraped from GitHub. Code Crawler produces something fundamentally richer: semantically annotated, graph-structured, build-aware, runtime-validated code intelligence.
+
+### 18.1 Training Data Assets Produced
+
+| Asset | Description | Training Application |
+|-------|-------------|---------------------|
+| **(code, summary) pairs** | Every `Function` row has AST-parsed code paired with an LLM-generated natural-language `summary` + confidence score | **Supervised fine-tuning** for code understanding / explanation models |
+| **Call graphs** | Typed edges: `calls`, `calls_over_ipc`, `uses_struct`, `includes_file`, `dt_binds_driver` | **Graph Neural Network (GNN)** pre-training (GraphCodeBERT-style data-flow learning) |
+| **Tier labels** | Every directory classified i0–i3 with LLM confidence + git evidence | **Classification model training** — teach models to distinguish vendor-custom vs. upstream code |
+| **Priority scores** | 6-dimensional composite scores on every function | **Ranking model training** — teach retrieval models which code is "important" in context |
+| **Variable access patterns** | `write_count`, `is_global`, cross-function mutation graphs | **Bug prediction models** — supervised data for concurrency / race condition detection |
+| **Runtime traces** | `hit_count`, `has_memory_error`, stack depth, sanitizer flags | **Defect prediction** — ground-truth labels for which functions actually crash |
+| **Build context** | `#ifdef` guard activation, dead branch identification | **Code comprehension** — teach models that `#ifdef FEATURE_X` code is conditionally alive |
+| **IPC topology** | Cross-process call edges (D-Bus, AIDL, Ubus) | **System-level reasoning** — train models to understand distributed architectures |
+| **Query logs** | Which functions developers/agents actually retrieve and inspect | **RLHF / DPO preference data** — implicit human feedback on code relevance |
+
+### 18.2 Four Training Paradigms
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│              CODE CRAWLER → AI TRAINING PIPELINE                     │
+│                                                                      │
+│  1. SUPERVISED FINE-TUNING                                           │
+│     (code, summary) pairs → Fine-tune CodeLlama / StarCoder         │
+│     Tier labels → Train classification heads                         │
+│     RuntimeTrace.has_memory_error → Bug prediction labels            │
+│                                                                      │
+│  2. GRAPH PRE-TRAINING                                               │
+│     DuckPGQ property graph → Export to PyG / DGL                     │
+│     Node features: embeddings, priority scores, complexity           │
+│     Edge features: call type, IPC protocol, build-guard activation   │
+│     → Train GNN encoders for code structure understanding            │
+│                                                                      │
+│  3. REINFORCEMENT LEARNING FROM HUMAN FEEDBACK (RLHF)               │
+│     Self-tuning weight adjustments = implicit preference signal      │
+│     Developer query patterns = retrieval relevance labels            │
+│     Annotation.approved = explicit human validation                  │
+│     → DPO/PPO training for better code retrieval & summarisation     │
+│                                                                      │
+│  4. DOMAIN-SPECIFIC EMBEDDING MODELS                                 │
+│     Use call-graph adjacency as supervision signal:                  │
+│       "Functions that call each other should embed nearby"           │
+│     Contrastive learning on (caller, callee) vs random pairs         │
+│     → Replaces generic MiniLM with embedded-Linux-native embeddings  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 18.3 Why This Data Is Uniquely Valuable
+
+Most public code training data lacks three things Code Crawler provides:
+
+1. **Build context**: Public datasets don't know which `#ifdef` branches are active. Code Crawler's build-system integration means training data includes only *actually compiled* code paths — eliminating noise from dead branches that confuse models.
+
+2. **Runtime ground truth**: Static analysis tells you what *could* happen. Code Crawler's debugger integration (`RuntimeTrace`, sanitizer annotations) provides ground-truth labels for what code *actually executes* and *actually crashes*. This is **defect prediction gold**.
+
+3. **Embedded systems domain**: The AI training world is drowning in web/mobile code and starving for embedded Linux, kernel, RTOS, and firmware training data. Code Crawler applied to Yocto/Buildroot/AOSP projects produces training data in the **scarcest and highest-value domain**.
+
+### 18.4 Export Pipeline (Future)
+
+```text
+codecrawler export-training \
+  --format parquet \
+  --include code-summary-pairs,call-graphs,tier-labels,runtime-labels \
+  --split train:0.8,val:0.1,test:0.1 \
+  --output ./training_data/
+```
+
+A future `export-training` CLI command would serialise the database into standard ML formats (Parquet, PyG graph objects, HuggingFace datasets) ready for direct ingestion into training pipelines.
+
+### 18.5 Training Data Metrics
+
+| Metric | Target |
+|--------|--------|
+| **(code, summary) pairs per project** | ~10K–500K depending on tier depth |
+| **Graph edges per project** | ~50K–2M (calls + IPC + struct + build edges) |
+| **Embedding dimensions** | 384 (upgradeable to domain-specific 768) |
+| **Label quality** | Confidence-tracked (`SummaryMeta.confidence`), human-approvable (`Annotation.approved`) |
+| **Domain coverage** | Embedded Linux, RTOS, kernel, firmware — the scarcest public training domain |

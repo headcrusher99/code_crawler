@@ -1,3 +1,16 @@
 TRASH/
 REFRENCES/
 git_commands_guide.md
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.codecrawler/
+.venv/
+
+# Rust
+native/target/
+native/Cargo.lock

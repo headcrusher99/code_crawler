@@ -1,6 +1,7 @@
-"""Storage component — DuckDB backend with graph and vector support."""
+"""Storage layer — DuckDB database, schema, graph, vector search, and index writer."""
 
 from codecrawler.storage.database import Database
-from codecrawler.storage.schema import SCHEMA_DDL, create_schema
+from codecrawler.storage.schema import create_schema
+from codecrawler.storage.writer import IndexWriter
 
-__all__ = ["Database", "SCHEMA_DDL", "create_schema"]
+__all__ = ["Database", "IndexWriter", "create_schema"]

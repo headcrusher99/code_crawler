@@ -1,0 +1,20 @@
+[package]
+name = "codecrawler-native"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-accelerated core for Code Crawler — parallel file walking, hashing, and scoring"
+license = "MIT"
+
+[lib]
+name = "codecrawler_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+rayon = "1.10"
+sha2 = "0.10"
+ignore = "0.4"
+walkdir = "2"
+
+[build-dependencies]
+pyo3-build-config = "0.22"
